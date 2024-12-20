@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using bpac;
+using System.IO.Compression;
 
 namespace BrotherPrintServer
 {
@@ -350,7 +351,7 @@ namespace BrotherPrintServer
 						printerOpened = true;
 
 						// Add image replacement before setting text fields
-						ReplaceTemplateImage(doc, printData.imageBase64);
+						ReplaceTemplateImage(doc, printData.imageBase64, templatePath);
 
 						foreach (IObject obj in doc.Objects)
 						{
@@ -425,7 +426,7 @@ namespace BrotherPrintServer
 					  string printerName = doc.GetPrinterName();
 					  
 						// Add image replacement before setting text fields
-						ReplaceTemplateImage(doc, printData.imageBase64);
+						ReplaceTemplateImage(doc, printData.imageBase64, templatePath);
 					  
 						foreach (IObject obj in doc.Objects)
 						{
@@ -478,33 +479,47 @@ namespace BrotherPrintServer
             }
 		}
 
-		private static void ReplaceTemplateImage(IDocument doc, string imageBase64)
+		private static void ReplaceTemplateImage(IDocument doc, string imageBase64, string templatePath)
 		{
 			if (string.IsNullOrEmpty(imageBase64))
 				return;
 
 			try
 			{
-				// Convert base64 to image
+				// Create temp template file
+				string tempTemplatePath = Path.GetTempFileName() + ".lbx";
+				File.Copy(templatePath, tempTemplatePath, true);
+
+				// Extract base64 to image
 				byte[] imageBytes = Convert.FromBase64String(imageBase64);
 				using (var ms = new MemoryStream(imageBytes))
 				using (var image = Image.FromStream(ms))
 				{
-					// Find and replace Object0 if it exists
-					IObject imageObj = doc.GetObject("Object0");
-					if (imageObj != null)
+					// Save as BMP
+					string tempImagePath = Path.GetTempFileName() + ".bmp";
+					image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
+
+					// Update the template file by replacing Object0.bmp in the zip
+					using (var archive = ZipFile.Open(tempTemplatePath, ZipArchiveMode.Update))
 					{
-						// Save temp image file
-						string tempImagePath = Path.GetTempFileName() + ".bmp";
-						image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
-
-						// Replace image in template
-						imageObj.Image = tempImagePath;
-
-						// Clean up temp file
-						try { File.Delete(tempImagePath); } catch { }
+						var imageEntry = archive.GetEntry("Object0.bmp");
+						if (imageEntry != null)
+						{
+							imageEntry.Delete();
+						}
+						archive.CreateEntryFromFile(tempImagePath, "Object0.bmp");
 					}
+
+					// Clean up temp image
+					try { File.Delete(tempImagePath); } catch { }
 				}
+
+				// Close current document and open modified template
+				doc.Close();
+				doc.Open(tempTemplatePath);
+
+				// Clean up temp template after document is opened
+				try { File.Delete(tempTemplatePath); } catch { }
 			}
 			catch (Exception ex)
 			{
