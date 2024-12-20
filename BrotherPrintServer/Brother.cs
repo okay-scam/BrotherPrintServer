@@ -499,7 +499,7 @@ namespace BrotherPrintServer
 						image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
 
 						// Replace image in template
-						imageObj.ImportImage(tempImagePath);
+						imageObj.SetImageFile(tempImagePath);
 
 						// Clean up temp file
 						try { File.Delete(tempImagePath); } catch { }
