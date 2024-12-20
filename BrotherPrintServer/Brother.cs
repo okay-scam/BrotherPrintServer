@@ -424,6 +424,9 @@ namespace BrotherPrintServer
 				  	bool setPrinterSuccessful = doc.SetPrinter(printData.printer, false);
 					  string printerName = doc.GetPrinterName();
 					  
+						// Add image replacement before setting text fields
+						ReplaceTemplateImage(doc, printData.imageBase64);
+					  
 						foreach (IObject obj in doc.Objects)
 						{
 							var name = obj.Name.ToLower();
@@ -496,7 +499,7 @@ namespace BrotherPrintServer
 						image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
 
 						// Replace image in template
-						imageObj.SetImage(tempImagePath);
+						imageObj.ImportImage(tempImagePath);
 
 						// Clean up temp file
 						try { File.Delete(tempImagePath); } catch { }
