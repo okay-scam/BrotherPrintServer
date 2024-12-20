@@ -18,6 +18,7 @@ namespace BrotherPrintServer
         public int count { get; set; }
 		public PrintOptionConstants[] options { get; set; }
 		public Dictionary<string, string> fields { get; set; }
+        public string imageBase64 { get; set; }
     }
 
 	public class PreviewData
@@ -25,6 +26,7 @@ namespace BrotherPrintServer
 		public string template { get; set; }
         public Dictionary<string, string> fields { get; set; }
 		public int width { get; set; }
+        public string imageBase64 { get; set; }
     }
 
 	public class PrinterInfo
@@ -347,6 +349,9 @@ namespace BrotherPrintServer
 					{
 						printerOpened = true;
 
+						// Add image replacement before setting text fields
+						ReplaceTemplateImage(doc, printData.imageBase64);
+
 						foreach (IObject obj in doc.Objects)
 						{
 							var name = obj.Name.ToLower();
@@ -468,6 +473,40 @@ namespace BrotherPrintServer
 					doc.Close();
 				semaphoreSlim.Release();
             }
+		}
+
+		private static void ReplaceTemplateImage(IDocument doc, string imageBase64)
+		{
+			if (string.IsNullOrEmpty(imageBase64))
+				return;
+
+			try
+			{
+				// Convert base64 to image
+				byte[] imageBytes = Convert.FromBase64String(imageBase64);
+				using (var ms = new MemoryStream(imageBytes))
+				using (var image = Image.FromStream(ms))
+				{
+					// Find and replace Object0 if it exists
+					IObject imageObj = doc.GetObject("Object0");
+					if (imageObj != null)
+					{
+						// Save temp image file
+						string tempImagePath = Path.GetTempFileName() + ".bmp";
+						image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
+
+						// Replace image in template
+						imageObj.SetImage(tempImagePath);
+
+						// Clean up temp file
+						try { File.Delete(tempImagePath); } catch { }
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"Error replacing image: {ex.Message}");
+			}
 		}
 	}
 }
