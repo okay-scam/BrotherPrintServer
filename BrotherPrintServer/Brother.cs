@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using bpac;
 using System.IO.Compression;
+using System.IO.Compression.FileSystem;
 
 namespace BrotherPrintServer
 {
