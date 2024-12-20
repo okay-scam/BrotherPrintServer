@@ -9,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using bpac;
 using System.IO.Compression;
-using System.IO.Compression.FileSystem;
 
 namespace BrotherPrintServer
 {
@@ -501,7 +500,8 @@ namespace BrotherPrintServer
 					image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
 
 					// Update the template file by replacing Object0.bmp in the zip
-					using (var archive = ZipFile.Open(tempTemplatePath, ZipArchiveMode.Update))
+					using (var fileStream = new FileStream(tempTemplatePath, FileMode.Open))
+					using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Update))
 					{
 						var imageEntry = archive.GetEntry("Object0.bmp");
 						if (imageEntry != null)
