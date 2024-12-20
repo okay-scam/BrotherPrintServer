@@ -492,14 +492,14 @@ namespace BrotherPrintServer
 				{
 					// Find and replace Object0 if it exists
 					IObject imageObj = doc.GetObject("Object0");
-					if (imageObj != null && imageObj is ImageObject)
+					if (imageObj != null && imageObj is bpac.ImageObject)
 					{
 						// Save temp image file
 						string tempImagePath = Path.GetTempFileName() + ".bmp";
 						image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
 
 						// Replace image in template
-						((ImageObject)imageObj).SetImageFile(tempImagePath);
+						((bpac.ImageObject)imageObj).SetImageFile(tempImagePath);
 
 						// Clean up temp file
 						try { File.Delete(tempImagePath); } catch { }
