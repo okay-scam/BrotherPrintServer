@@ -28,6 +28,13 @@ namespace BrotherPrintServer
         public async Task Print() => await Brother.PrintAsync(await HttpContext.GetRequestDataAsync<PrintData>());
 
         [Route(HttpVerbs.Post, "/preview")]
-        public async Task<string> Preview() => await Brother.PreviewAsync(await HttpContext.GetRequestDataAsync<PreviewData>());
+        public async Task<IActionResult> Preview()
+        {
+            var previewData = await HttpContext.GetRequestDataAsync<PreviewData>();
+            string base64Image = await Brother.PreviewAsync(previewData);
+            
+            // Return the base64 string as raw text content without JSON serialization
+            return new TextContent(base64Image, "text/plain");
+        }
     } 
 }
