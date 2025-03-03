@@ -233,6 +233,48 @@ namespace BrotherPrintServer
 		private static List<PrinterInfo> printerInfos;
 		private static List<TemplateInfo> templateInfos;
 
+		private static readonly Dictionary<string, IDocument> _templateCache = new Dictionary<string, IDocument>();
+		private static readonly Dictionary<string, DateTime> _templateLastUsed = new Dictionary<string, DateTime>();
+		private static readonly object _cacheLock = new object();
+		private const int MAX_CACHE_SIZE = 10; // Adjust based on memory constraints
+
+		private static IDocument GetCachedTemplate(string templateName)
+		{
+			string templatePath = String.Format("{0}{1}.lbx", TEMPLATE_DIRECTORY, templateName);
+			
+			lock (_cacheLock)
+			{
+				// Check if template is in cache
+				if (_templateCache.TryGetValue(templateName, out IDocument cachedDoc))
+				{
+					_templateLastUsed[templateName] = DateTime.Now;
+					return cachedDoc;
+				}
+				
+				// Load template
+				IDocument doc = new Document();
+				if (doc.Open(templatePath))
+				{
+					// Manage cache size
+					if (_templateCache.Count >= MAX_CACHE_SIZE)
+					{
+						// Remove least recently used template
+						var oldest = _templateLastUsed.OrderBy(x => x.Value).First().Key;
+						_templateCache[oldest].Close();
+						_templateCache.Remove(oldest);
+						_templateLastUsed.Remove(oldest);
+					}
+					
+					// Add to cache
+					_templateCache[templateName] = doc;
+					_templateLastUsed[templateName] = DateTime.Now;
+					return doc;
+				}
+				
+				return null;
+			}
+		}
+
 		public static async Task<IEnumerable<PrinterInfo>> GetPrintersAsync(bool forceUpdate = false)
 		{
 		    await semaphoreSlim.WaitAsync();
@@ -328,71 +370,51 @@ namespace BrotherPrintServer
     	public static async Task<string> PreviewAsync(PreviewData printData)
 		{
 			string outString = "";
-			IDocument doc = null; 
-			bool printerOpened = false;
+			
 			//sanity check
-			if (printData.template == null || printData.template == "")
+			if (string.IsNullOrEmpty(printData.template))
 				return outString;
 
 			await semaphoreSlim.WaitAsync();
 
 			try {
-			string templatePath = String.Format("{0}{1}.lbx", TEMPLATE_DIRECTORY, printData.template);
+				// Get cached template or load new one
+				IDocument doc = GetCachedTemplate(printData.template);
+				if (doc == null)
+					return outString;
+					
+				// Create a working copy to avoid modifying cached template
+				IDocument workingDoc = new Document();
+				workingDoc.Open(String.Format("{0}{1}.lbx", TEMPLATE_DIRECTORY, printData.template));
+				
+				// Add image replacement before setting text fields
+				ReplaceTemplateImage(workingDoc, printData.imageBase64, String.Format("{0}{1}.lbx", TEMPLATE_DIRECTORY, printData.template));
+				
+				// Apply fields efficiently
+				ApplyFieldsToTemplate(workingDoc, printData.fields);
 
-
-				//using (ComDisposer cd = new ComDisposer())
-				//{
-
-					doc = new Document();
-					//doc = cd.Add(new Document());
-
-					if (doc.Open(templatePath))
+				// Generate preview image
+				using (var ms = new MemoryStream(workingDoc.GetImageData(ExportType.bexBmp, printData.width, 0)))
+				{
+					using (Bitmap bmp = new Bitmap(ms))
+					using (var ms_out = new MemoryStream())
 					{
-						printerOpened = true;
-
-						// Add image replacement before setting text fields
-						ReplaceTemplateImage(doc, printData.imageBase64, templatePath);
-
-						foreach (IObject obj in doc.Objects)
-						{
-							var name = obj.Name.ToLower();
-							string key = printData.fields.Keys.FirstOrDefault(m => m.ToLower() == name);
-							if (key != null)
-								obj.Text = printData.fields[key];
-							else
-								obj.Text = "";
-						}
-
-					//PrintOptionConstants options = PrintOptionConstants.bpoHalfCut | PrintOptionConstants.bpoHighResolution;
-					using (var ms = new MemoryStream(doc.GetImageData(ExportType.bexBmp, printData.width, 0)))
-					{
-						Bitmap bmp = new Bitmap(ms);
-						using (var ms_out = new MemoryStream())
-						{
-							bmp.Save(ms_out, System.Drawing.Imaging.ImageFormat.Png);
-							//outString = "data:image/png;base64," + Convert.ToBase64String(ms_out.ToArray());
-							outString = Convert.ToBase64String(ms_out.ToArray());
-						}
-
-						doc.Close();
-                    }
+						bmp.Save(ms_out, System.Drawing.Imaging.ImageFormat.Png);
+						outString = Convert.ToBase64String(ms_out.ToArray());
 					}
-					else
-					{
-						//MessageBox.Show("Open() Error: " + doc.ErrorCode);
-					}
-				//}
-			 }
+				}
+				
+				workingDoc.Close();
+			}
 			catch(Exception ex)
-            {
+			{
 				Console.WriteLine(ex);
-            }
+			}
 			finally
-            {
-				if (printerOpened)
-					doc.Close();
+			{
 				semaphoreSlim.Release();
-            }
+			}
+			
 			return outString;
 		}
     	public static async Task PrintAsync(PrintData printData)
@@ -428,15 +450,7 @@ namespace BrotherPrintServer
 						// Add image replacement before setting text fields
 						ReplaceTemplateImage(doc, printData.imageBase64, templatePath);
 					  
-						foreach (IObject obj in doc.Objects)
-						{
-							var name = obj.Name.ToLower();
-							string key = printData.fields.Keys.FirstOrDefault(m => m.ToLower() == name);
-							if (key != null)
-								obj.Text = printData.fields[key];
-							else
-								obj.Text = "";
-						}
+						ApplyFieldsToTemplate(doc, printData.fields);
 
 					//foreach (var nv in printData.fields)
 					//{
@@ -486,45 +500,86 @@ namespace BrotherPrintServer
 
 			try
 			{
-				// Create temp template file
-				string tempTemplatePath = Path.GetTempFileName() + ".lbx";
-				File.Copy(templatePath, tempTemplatePath, true);
-
-				// Extract base64 to image
+				// Use memory streams where possible to avoid disk I/O
 				byte[] imageBytes = Convert.FromBase64String(imageBase64);
 				using (var ms = new MemoryStream(imageBytes))
 				using (var image = Image.FromStream(ms))
 				{
-					// Save as BMP
+					// Create temp files only when necessary
 					string tempImagePath = Path.GetTempFileName() + ".bmp";
-					image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
-
-					// Update the template file by replacing Object0.bmp in the zip
-					using (var fileStream = new FileStream(tempTemplatePath, FileMode.Open))
-					using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Update))
+					string tempTemplatePath = Path.GetTempFileName() + ".lbx";
+					
+					try
 					{
-						var imageEntry = archive.GetEntry("Object0.bmp");
-						if (imageEntry != null)
+						// Save as BMP
+						image.Save(tempImagePath, System.Drawing.Imaging.ImageFormat.Bmp);
+						File.Copy(templatePath, tempTemplatePath, true);
+						
+						// Update the template file
+						using (var fileStream = new FileStream(tempTemplatePath, FileMode.Open))
+						using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Update))
 						{
-							imageEntry.Delete();
+							var imageEntry = archive.GetEntry("Object0.bmp");
+							if (imageEntry != null)
+							{
+								imageEntry.Delete();
+							}
+							archive.CreateEntryFromFile(tempImagePath, "Object0.bmp");
 						}
-						archive.CreateEntryFromFile(tempImagePath, "Object0.bmp");
+						
+						// Close current document and open modified template
+						doc.Close();
+						doc.Open(tempTemplatePath);
 					}
-
-					// Clean up temp image
-					try { File.Delete(tempImagePath); } catch { }
+					finally
+					{
+						// Clean up temp files
+						try { File.Delete(tempImagePath); } catch { }
+						try { File.Delete(tempTemplatePath); } catch { }
+					}
 				}
-
-				// Close current document and open modified template
-				doc.Close();
-				doc.Open(tempTemplatePath);
-
-				// Clean up temp template after document is opened
-				try { File.Delete(tempTemplatePath); } catch { }
 			}
 			catch (Exception ex)
 			{
 				Console.WriteLine($"Error replacing image: {ex.Message}");
+			}
+		}
+
+		private static void ApplyFieldsToTemplate(IDocument doc, Dictionary<string, string> fields)
+		{
+			// Create case-insensitive dictionary for faster lookups
+			var fieldsDictionary = new Dictionary<string, string>(
+				fields, StringComparer.OrdinalIgnoreCase);
+			
+			// Pre-fetch all objects to minimize COM interop overhead
+			var objects = new List<IObject>();
+			foreach (IObject obj in doc.Objects)
+			{
+				objects.Add(obj);
+			}
+			
+			// Apply fields to objects
+			foreach (var obj in objects)
+			{
+				if (fieldsDictionary.TryGetValue(obj.Name, out string value))
+				{
+					obj.Text = value;
+				}
+				// Don't clear fields that aren't in the input dictionary
+				// This preserves any existing content in the template
+			}
+		}
+
+		public static void CleanupTemplateCache()
+		{
+			lock (_cacheLock)
+			{
+				foreach (var doc in _templateCache.Values)
+				{
+					doc.Close();
+				}
+				_templateCache.Clear();
+				_templateLastUsed.Clear();
 			}
 		}
 	}
