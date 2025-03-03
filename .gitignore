@@ -4,3 +4,4 @@ BrotherPrintServer/obj/
 packages/
 Redist/
 .cursorrules
+.cursorignore
