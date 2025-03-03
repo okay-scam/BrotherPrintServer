@@ -6,6 +6,7 @@ using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.Utilities;
 using EmbedIO.WebApi;
+using EmbedIO.Actions;
 using Unosquare.Tubular;
 
 namespace BrotherPrintServer
@@ -28,13 +29,14 @@ namespace BrotherPrintServer
         public async Task Print() => await Brother.PrintAsync(await HttpContext.GetRequestDataAsync<PrintData>());
 
         [Route(HttpVerbs.Post, "/preview")]
-        public async Task<IActionResult> Preview()
+        public async Task Preview()
         {
             var previewData = await HttpContext.GetRequestDataAsync<PreviewData>();
             string base64Image = await Brother.PreviewAsync(previewData);
             
             // Return the base64 string as raw text content without JSON serialization
-            return new TextContent(base64Image, "text/plain");
+            HttpContext.Response.ContentType = "text/plain";
+            await HttpContext.SendStringAsync(base64Image);
         }
     } 
 }
