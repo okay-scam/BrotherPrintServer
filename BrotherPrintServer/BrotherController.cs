@@ -35,7 +35,7 @@ namespace BrotherPrintServer
             string base64Image = await Brother.PreviewAsync(previewData);
             
             // Return the base64 string as raw text content without JSON serialization
-            await HttpContext.SendStringAsync(base64Image, "text/plain");
+            await HttpContext.SendStringAsync(base64Image, "text/plain", System.Text.Encoding.UTF8);
         }
     } 
 }
